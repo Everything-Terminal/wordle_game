@@ -1,0 +1,10 @@
+wordle
+
+*.o
+*.obj
+
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
