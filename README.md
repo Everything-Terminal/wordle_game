@@ -138,17 +138,6 @@ terminal-wordle/
 
 ---
 
-## 🧹 Ignore the Compiled Binary
-
-If you use Git, add this to `.gitignore`:
-
-```gitignore
-wordle
-*.o
-```
-
----
-
 ## 🛠 Possible Future Improvements
 
 - Larger word list
