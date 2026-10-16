@@ -50,6 +50,71 @@ const char *words[] = {
 
 #define WORD_COUNT (sizeof(words) / sizeof(words[0]))
 
+/* ------ Dictionary (valid guesses) ------ */
+static char (*dict)[WORD_LEN + 1] = NULL;
+static size_t dictCount = 0;
+static size_t dictCap = 0;
+static bool haveDictionary = false;
+
+static void dictAdd(const char *w) {
+    if (dictCount == dictCap) {
+        size_t newCap = dictCap ? dictCap * 2 : 1024;
+        void *p = realloc(dict, newCap * sizeof(*dict));
+        if (!p) return;
+        dict = p;
+        dictCap = newCap;
+    }
+    memcpy(dict[dictCount], w, WORD_LEN + 1);
+    dictCount++;
+}
+
+static int dictCompare(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b);
+}
+
+/* Loads lowercase 5-letter words from a file. Returns number added. */
+static size_t dictLoadFile(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+
+    size_t before = dictCount;
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        size_t len = strcspn(line, "\r\n");
+        line[len] = '\0';
+        if (len != WORD_LEN) continue;
+
+        bool ok = true;
+        for (int i = 0; i < WORD_LEN; i++) {
+            if (line[i] < 'a' || line[i] > 'z') { ok = false; break; }
+        }
+        if (ok) dictAdd(line);
+    }
+    fclose(f);
+    return dictCount - before;
+}
+
+static void dictInit(void) {
+    /* Your own list wins; otherwise use the system dictionary. */
+    size_t n = dictLoadFile("words.txt");
+    if (n == 0) n = dictLoadFile("/usr/share/dict/words");
+    haveDictionary = (n > 0);
+
+    /* Answers are always valid guesses. */
+    for (size_t i = 0; i < WORD_COUNT; i++) dictAdd(words[i]);
+
+    qsort(dict, dictCount, sizeof(*dict), dictCompare);
+}
+
+static bool inDictionary(const char *guess) {
+    if (!haveDictionary) {
+        /* No word list available: fall back to accepting any 5 letters,
+         * unless it is one of our answers (always fine). */
+        return true;
+    }
+    return bsearch(guess, dict, dictCount, sizeof(*dict), dictCompare) != NULL;
+}
+
 static bool cursorHidden = false;
 
 void showCursor(void) {
@@ -350,6 +415,8 @@ int main(void) {
     char input[64];
     bool play = true;
 
+    dictInit();
+
     printInstructions();
     if (fgets(input, sizeof(input), stdin) == NULL) {
         return 0;
@@ -394,7 +461,7 @@ int main(void) {
             if (!validGuess(input)) {
                 char err[128];
                 snprintf(err, sizeof(err),
-                         ERROR_COLOR "       Enter exactly 5 letters(A-Z)." RESET);
+                         ERROR_COLOR "        Enter exactly 5 letters (A-Z)." RESET);
                 renderGame(guesses, results, guessCount, -1, 0, -1, keyboard, err);
                 sleepMs(1300);
                 continue;
@@ -405,6 +472,15 @@ int main(void) {
                 guess[i] = (char)tolower((unsigned char)input[i]);
             }
             guess[WORD_LEN] = '\0';
+
+            if (!inDictionary(guess)) {
+                char err[128];
+                snprintf(err, sizeof(err),
+                         ERROR_COLOR "        Not in word list." RESET);
+                renderGame(guesses, results, guessCount, -1, 0, -1, keyboard, err);
+                sleepMs(1300);
+                continue;
+            }
 
             strcpy(guesses[guessCount], guess);
             evaluateGuess(target, guess, results[guessCount]);
