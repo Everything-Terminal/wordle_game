@@ -115,6 +115,88 @@ static bool inDictionary(const char *guess) {
     return bsearch(guess, dict, dictCount, sizeof(*dict), dictCompare) != NULL;
 }
 
+/* ------ Statistics ------ */
+
+typedef struct {
+    int played;
+    int won;
+    int streak;
+    int maxStreak;
+    int dist[MAX_GUESSES];
+} Stats;
+
+static void statsPath(char *out, size_t n) {
+    const char *home = getenv("HOME");
+    if (home && *home) snprintf(out, n, "%s/.wordle_stats", home);
+    else snprintf(out, n, ".wordle_stats");
+}
+
+static void statsLoad(Stats *s) {
+    memset(s, 0, sizeof(*s));
+    char path[512];
+    statsPath(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+
+    Stats t;
+    memset(&t, 0, sizeof(t));
+    int ok = fscanf(f, "%d %d %d %d", &t.played, &t.won, &t.streak, &t.maxStreak) == 4;
+    for (int i = 0; ok && i < MAX_GUESSES; i++) {
+        ok = fscanf(f, "%d", &t.dist[i]) == 1;
+    }
+    fclose(f);
+    if (ok) *s = t;
+}
+
+static void statsSave(const Stats *s) {
+    char path[512];
+    statsPath(path, sizeof(path));
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "%d %d %d %d", s->played, s->won, s->streak, s->maxStreak);
+    for (int i = 0; i < MAX_GUESSES; i++) fprintf(f, " %d", s->dist[i]);
+    fprintf(f, "\n");
+    fclose(f);
+}
+
+static void statsRecord(Stats *s, bool won, int guesses) {
+    s->played++;
+    if (won) {
+        s->won++;
+        s->streak++;
+        if (s->streak > s->maxStreak) s->maxStreak = s->streak;
+        if (guesses >= 1 && guesses <= MAX_GUESSES) s->dist[guesses - 1]++;
+    } else {
+        s->streak = 0;
+    }
+}
+
+static void statsPrint(const Stats *s, bool won, int lastGuesses) {
+    int winPct = s->played ? (int)((100.0 * s->won / s->played) + 0.5) : 0;
+
+    printf("\n" TITLE_COLOR "      STATISTICS" RESET "\n\n");
+    printf(HUD_COLOR "       Played: " RESET BOLD "%-4d" RESET
+           HUD_COLOR " Win %%: " RESET BOLD "%-4d" RESET
+           HUD_COLOR " Streak: " RESET BOLD "%-3d" RESET
+           HUD_COLOR " Best: " RESET BOLD "%d" RESET "\n\n",
+           s->played, winPct, s->streak, s->maxStreak);
+
+    int maxCount = 1;
+    for (int i = 0; i < MAX_GUESSES; i++) {
+        if (s->dist[i] > maxCount) maxCount = s->dist[i];
+    }
+
+    printf(TITLE_COLOR "       GUESS DISTRIBUTION" RESET "\n");
+    for (int i = 0; i < MAX_GUESSES; i++) {
+        int bar = s->dist[i] * 20 / maxCount;
+        if (s->dist[i] > 0 && bar == 0) bar = 1;
+        bool current = won && (i + 1 == lastGuesses);
+        printf(HUD_COLOR "       %d " RESET "%s", i + 1, current ? GREEN_BG : GRAY_BG);
+        for (int b = 0; b < bar; b++) printf(" ");
+        printf(" %d " RESET "\n", s->dist[i]);
+    }
+}
+
 static bool cursorHidden = false;
 
 void showCursor(void) {
@@ -416,6 +498,8 @@ int main(void) {
     bool play = true;
 
     dictInit();
+    Stats stats;
+    statsLoad(&stats);
 
     printInstructions();
     if (fgets(input, sizeof(input), stdin) == NULL) {
@@ -526,9 +610,14 @@ int main(void) {
                          ERROR_COLOR "        The word was: %s" RESET, upper);
             }
 
+            statsRecord(&stats, won, guessCount);
+            statsSave(&stats);
+
             renderGame(guesses, results, guessCount, -1, 0, -1, keyboard, endMsg);
             printf("\n");
-            printf(SUCCESS_COLOR "        Play again? (y/n): " RESET);
+            statsPrint(&stats, won, guessCount);
+
+            printf("\n" SUCCESS_COLOR "        Play again? (y/n): " RESET);
             fflush(stdout);
             showCursor();
 
